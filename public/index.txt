@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pi Sender Bot UI</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Pi Sender Bot</h1>
+        <p>Kontrol bot pengirim Pi Anda. Mnemonic dan Alamat Penerima dikonfigurasi di server.</p>
+        
+        <div class="controls">
+            <button id="startButton">▶️ Start</button>
+            <button id="stopButton" disabled>⏹️ Stop</button>
+        </div>
+
+        <h2>Log Aktivitas</h2>
+        <div class="log-container">
+            <pre id="log-console"></pre>
+        </div>
+    </div>
+    <script src="client.js"></script>
+</body>
+</html>
