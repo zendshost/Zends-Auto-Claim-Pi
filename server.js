@@ -22,7 +22,8 @@ let clientWs = null; // Menyimpan koneksi WebSocket client
 
 // Fungsi untuk mengirim log ke browser
 const logToBrowser = (message, level = 'info') => {
-    console.log(message); // Juga tampilkan di konsol server
+    // Tetap tampilkan di konsol server untuk debugging
+    // console.log(message); 
     if (clientWs && clientWs.readyState === clientWs.OPEN) {
         clientWs.send(JSON.stringify({ type: 'log', level, message }));
     }
@@ -42,7 +43,6 @@ async function getPiWalletAddressFromSeed(mnemonic) {
 async function runSenderLogic() {
     if (!isRunning) return;
 
-    // Inisialisasi satu kali saat proses dimulai
     logToBrowser("🚀 Memulai inisialisasi bot...");
     const mnemonic = process.env.MNEMONIC;
     const recipient = process.env.RECEIVER_ADDRESS;
@@ -70,14 +70,19 @@ async function runSenderLogic() {
                 const piBalance = account.balances.find(b => b.asset_type === 'native');
                 const balance = parseFloat(piBalance.balance);
 
-                logToBrowser(`Pi Balance: ${balance}`);
-
+                // Sedikit modifikasi untuk mengurangi banjir log di UI
+                // Kita hanya akan log status saldo sekali per detik saat saldo kosong
+                let lastBalanceLogTime = 0;
+                
                 const amountToSend = balance - 1.01;
 
                 if (amountToSend <= 0) {
-                    logToBrowser("⚠️ Saldo tidak cukup. Menunggu 10 detik...", 'warn');
-                    await new Promise(resolve => setTimeout(resolve, 10000));
-                    continue;
+                    const now = Date.now();
+                    if (now - lastBalanceLogTime > 1000) { // Log hanya sekali per detik
+                         logToBrowser(`⚠️ Saldo tidak cukup (${balance} Pi). Memeriksa tanpa henti...`, 'warn');
+                         lastBalanceLogTime = now;
+                    }
+                    continue; // <- LOOP TANPA JEDA
                 }
 
                 const formattedAmount = amountToSend.toFixed(7);
@@ -106,7 +111,8 @@ async function runSenderLogic() {
                 const errorMessage = e.response?.data?.extras?.result_codes?.transaction || e.message || "Error tidak diketahui";
                 logToBrowser(`❌ Terjadi Error: ${errorMessage}`, 'error');
                 logToBrowser("------------------------------------------------------");
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                // Tambahkan jeda saat error untuk mencegah spam saat ada masalah persisten (misal: API down)
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
     } catch (initError) {
@@ -122,31 +128,25 @@ async function runSenderLogic() {
 wss.on('connection', (ws) => {
     logToBrowser('🖥️ Client terhubung ke server.');
     clientWs = ws;
-
-    // Kirim status saat ini ke client baru
     ws.send(JSON.stringify({ type: 'status', running: isRunning }));
-
     ws.on('message', (message) => {
         const data = JSON.parse(message);
         if (data.command === 'start') {
             if (!isRunning) {
                 isRunning = true;
-                runSenderLogic(); // Jalankan proses di background
+                runSenderLogic();
             }
         } else if (data.command === 'stop') {
             isRunning = false;
         }
     });
-
     ws.on('close', () => {
         logToBrowser('🔌 Client terputus.');
         clientWs = null;
-        // Opsional: otomatis hentikan proses jika UI ditutup
-        // isRunning = false;
     });
 });
 
-// Jalankan server
+// Jalankan server (TETAP SAMA)
 server.listen(PORT, () => {
     console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
 });
