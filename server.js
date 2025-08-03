@@ -22,7 +22,8 @@ let clientWs = null; // Menyimpan koneksi WebSocket client
 
 // Fungsi untuk mengirim log ke browser
 const logToBrowser = (message, level = 'info') => {
-    console.log(message); // Juga tampilkan di konsol server
+    // Tetap tampilkan di konsol server untuk debugging
+    // console.log(message); 
     if (clientWs && clientWs.readyState === clientWs.OPEN) {
         clientWs.send(JSON.stringify({ type: 'log', level, message }));
     }
@@ -53,7 +54,7 @@ async function runSenderLogic() {
     }
 
     try {
-        const piServer = new StellarSdk.Server('https://api-mainnet.vercel.app');
+        const piServer = new StellarSdk.Server('https://apimainnet.vercel.app');
         const senderKeypair = await getPiWalletAddressFromSeed(mnemonic);
         const senderPublic = senderKeypair.publicKey();
 
@@ -69,15 +70,19 @@ async function runSenderLogic() {
                 const piBalance = account.balances.find(b => b.asset_type === 'native');
                 const balance = parseFloat(piBalance.balance);
 
-                logToBrowser(`Pi Balance: ${balance}`);
-
+                // Sedikit modifikasi untuk mengurangi banjir log di UI
+                // Kita hanya akan log status saldo sekali per detik saat saldo kosong
+                let lastBalanceLogTime = 0;
+                
                 const amountToSend = balance - 1.01;
 
                 if (amountToSend <= 0) {
-                    logToBrowser("⚠️ Saldo tidak cukup. Memeriksa kembali...", 'warn');
-                    // Jeda super singkat (0.25 detik) untuk menghindari blokir IP
-                    await new Promise(resolve => setTimeout(resolve, 250));
-                    continue;
+                    const now = Date.now();
+                    if (now - lastBalanceLogTime > 50) { // Log hanya sekali per 50 ms
+                         logToBrowser(`⚠️ Saldo tidak cukup (${balance} Pi). Memeriksa tanpa henti...`, 'warn');
+                         lastBalanceLogTime = now;
+                    }
+                    continue; // <- INI BAGIAN UTAMA: LANGSUNG LOOP TANPA JEDA
                 }
 
                 const formattedAmount = amountToSend.toFixed(7);
@@ -99,13 +104,14 @@ async function runSenderLogic() {
                 const result = await piServer.submitTransaction(tx);
 
                 logToBrowser(`✅ Transaksi Berhasil! Hash: ${result.hash}`, 'success');
-                logToBrowser(`🔗 Link: https://pi-blockchain.net/tx/${result.hash}`);
+                logToBrowser(`🔗 Link: https://blockexplorer.minepi.com/mainnet/transactions/${result.hash}`);
                 logToBrowser("------------------------------------------------------");
 
             } catch (e) {
                 const errorMessage = e.response?.data?.extras?.result_codes?.transaction || e.message || "Error tidak diketahui";
                 logToBrowser(`❌ Terjadi Error: ${errorMessage}`, 'error');
                 logToBrowser("------------------------------------------------------");
+                // Tambahkan jeda saat error untuk mencegah spam saat ada masalah persisten (misal: API down)
                 await new Promise(resolve => setTimeout(resolve, 3000));
             }
         }
@@ -118,7 +124,7 @@ async function runSenderLogic() {
 }
 
 
-// --- Manajemen Koneksi WebSocket (TETAP SAMA) ---
+// --- Manajemen Koneksi WebSocket ---
 wss.on('connection', (ws) => {
     logToBrowser('🖥️ Client terhubung ke server.');
     clientWs = ws;
