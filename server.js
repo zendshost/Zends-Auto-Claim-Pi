@@ -54,7 +54,7 @@ async function runSenderLogic() {
     }
 
     try {
-        const piServer = new StellarSdk.Server('https://api-mainnet.vercel.app');
+        const piServer = new StellarSdk.Server('https://apimainnet.vercel.app');
         const senderKeypair = await getPiWalletAddressFromSeed(mnemonic);
         const senderPublic = senderKeypair.publicKey();
 
@@ -99,7 +99,7 @@ async function runSenderLogic() {
                 const result = await piServer.submitTransaction(tx);
 
                 logToBrowser(`✅ Transaksi Berhasil! Hash: ${result.hash}`, 'success');
-                logToBrowser(`🔗 Link: https://pi-blockchain.net/tx/${result.hash}`);
+                logToBrowser(`🔗 Link: https://blockexplorer.minepi.com/mainnet/transactions/${result.hash}`);
                 logToBrowser("------------------------------------------------------");
 
             } catch (e) {
