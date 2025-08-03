@@ -1,36 +1,31 @@
-// Import Modul
 const express = require('express');
 const http = require('http');
 const path = require('path');
-const { Server } = require('ws');
+const { Server: WebSocketServer } = require('ws');
 const StellarSdk = require('stellar-sdk');
 const ed25519 = require('ed25519-hd-key');
 const bip39 = require('bip39');
 require("dotenv").config();
 
-// --- Konfigurasi & Inisialisasi ---
 const PORT = process.env.PORT || 3000;
 const app = express();
 const server = http.createServer(app);
-const wss = new Server({ server });
+const wss = new WebSocketServer({ server });
 
-// Sajikan file statis dari folder 'public'
 app.use(express.static(path.join(__dirname, 'public')));
 
-let isRunning = false; // Variabel untuk mengontrol loop
-let clientWs = null; // Menyimpan koneksi WebSocket client
+let isRunning = false;
+let currentConfig = {};
+let clientWs = null;
 
-// Fungsi untuk mengirim log ke browser
 const logToBrowser = (message, level = 'info') => {
-    // Tetap tampilkan di konsol server untuk debugging
-    // console.log(message); 
+    console.log(message);
     if (clientWs && clientWs.readyState === clientWs.OPEN) {
         clientWs.send(JSON.stringify({ type: 'log', level, message }));
     }
 };
 
-// --- Logika Pi Sender ---
-async function getPiWalletAddressFromSeed(mnemonic) {
+async function getKeypairFromMnemonic(mnemonic) {
     if (!bip39.validateMnemonic(mnemonic)) {
         throw new Error("Mnemonic tidak valid.");
     }
@@ -40,113 +35,159 @@ async function getPiWalletAddressFromSeed(mnemonic) {
     return StellarSdk.Keypair.fromRawEd25519Seed(key);
 }
 
-async function runSenderLogic() {
+// --- LOGIKA SPAMMER UTAMA ---
+async function runSpammer(config) {
     if (!isRunning) return;
 
-    logToBrowser("🚀 Memulai inisialisasi bot...");
-    const mnemonic = process.env.MNEMONIC;
-    const recipient = process.env.RECEIVER_ADDRESS;
-
-    if (!mnemonic || !recipient) {
-        logToBrowser("❌ Pastikan MNEMONIC dan RECEIVER_ADDRESS sudah diatur di file .env", 'error');
-        isRunning = false;
-        return;
-    }
-
+    logToBrowser("🚀 Memulai proses spam paralel...");
     try {
         const piServer = new StellarSdk.Server('https://apimainnet.vercel.app');
-        const senderKeypair = await getPiWalletAddressFromSeed(mnemonic);
-        const senderPublic = senderKeypair.publicKey();
-
-        logToBrowser(`🔑 Alamat Pengirim: ${senderPublic}`);
-        logToBrowser(`🎯 Alamat Penerima: ${recipient}`);
-        logToBrowser("✅ Inisialisasi selesai. Memulai loop transaksi...");
+        
+        // 1. Siapkan semua keypair
+        const senderKeypair = await getKeypairFromMnemonic(config.senderMnemonic);
+        const useFeePayer = config.feePayerMnemonic && config.feePayerMnemonic.length > 0;
+        let feePayerKeypair = null;
+        if (useFeePayer) {
+            feePayerKeypair = await getKeypairFromMnemonic(config.feePayerMnemonic);
+            logToBrowser(`🔑 Wallet Pengirim: ${senderKeypair.publicKey()}`);
+            logToBrowser(`💰 Wallet Pembayar Fee: ${feePayerKeypair.publicKey()}`);
+        } else {
+            logToBrowser(`🔑 Wallet Pengirim (juga membayar fee): ${senderKeypair.publicKey()}`);
+        }
+        logToBrowser(`🎯 Alamat Penerima: ${config.recipientAddress}`);
+        logToBrowser(`⚡ Mode Spam: ${config.parallelRequests} request/batch`);
+        logToBrowser(`💸 Jumlah per TX: ${config.amountPerTx} Pi`);
         logToBrowser("======================================================");
 
-        // Loop utama
+        // 2. Loop utama untuk setiap batch spam
         while (isRunning) {
             try {
-                const account = await piServer.loadAccount(senderPublic);
-                const piBalance = account.balances.find(b => b.asset_type === 'native');
-                const balance = parseFloat(piBalance.balance);
-
-                // Sedikit modifikasi untuk mengurangi banjir log di UI
-                // Kita hanya akan log status saldo sekali per detik saat saldo kosong
-                let lastBalanceLogTime = 0;
+                // Ambil base fee SEKALI per batch untuk efisiensi
+                const baseFee = await piServer.fetchBaseFee();
                 
-                const amountToSend = balance - 1.01;
-
-                if (amountToSend <= 0) {
-                    const now = Date.now();
-                    if (now - lastBalanceLogTime > 1000) { // Log hanya sekali per detik
-                         logToBrowser(`⚠️ Saldo tidak cukup (${balance} Pi). Memeriksa tanpa henti...`, 'warn');
-                         lastBalanceLogTime = now;
-                    }
-                    continue; // <- LOOP TANPA JEDA
+                // Ambil status akun terbaru SEKALI per batch
+                const senderAccount = await piServer.loadAccount(senderKeypair.publicKey());
+                let feePayerAccount = null;
+                if (useFeePayer) {
+                    feePayerAccount = await piServer.loadAccount(feePayerKeypair.publicKey());
                 }
 
-                const formattedAmount = amountToSend.toFixed(7);
-                logToBrowser(`➡️  Mengirim: ${formattedAmount} Pi`);
+                logToBrowser(`--- Memulai Batch Baru | Saldo Pengirim: ${senderAccount.balances[0].balance} Pi ---`);
 
-                const tx = new StellarSdk.TransactionBuilder(account, {
-                    fee: await piServer.fetchBaseFee(),
-                    networkPassphrase: 'Pi Network',
-                })
-                    .addOperation(StellarSdk.Operation.payment({
-                        destination: recipient,
-                        asset: StellarSdk.Asset.native(),
-                        amount: formattedAmount,
-                    }))
-                    .setTimeout(30)
-                    .build();
+                const promises = [];
+                for (let i = 0; i < config.parallelRequests; i++) {
+                    const txPromise = buildAndSubmitTx({
+                        piServer,
+                        senderKeypair,
+                        feePayerKeypair,
+                        senderAccount,
+                        feePayerAccount,
+                        recipient: config.recipientAddress,
+                        amount: config.amountPerTx,
+                        baseFee: baseFee,
+                        sequenceIndex: i, // Untuk increment sequence number
+                        txId: i + 1
+                    });
+                    promises.push(txPromise);
+                }
 
-                tx.sign(senderKeypair);
-                const result = await piServer.submitTransaction(tx);
-
-                logToBrowser(`✅ Transaksi Berhasil! Hash: ${result.hash}`, 'success');
-                logToBrowser(`🔗 Link: https://blockexplorer.minepi.com/mainnet/transactions/${result.hash}`);
-                logToBrowser("------------------------------------------------------");
-
+                // Tunggu semua transaksi dalam batch selesai
+                await Promise.allSettled(promises);
+                logToBrowser(`--- Batch Selesai. Menyiapkan batch berikutnya... ---`);
+                
             } catch (e) {
-                const errorMessage = e.response?.data?.extras?.result_codes?.transaction || e.message || "Error tidak diketahui";
-                logToBrowser(`❌ Terjadi Error: ${errorMessage}`, 'error');
-                logToBrowser("------------------------------------------------------");
-                // Tambahkan jeda saat error untuk mencegah spam saat ada masalah persisten (misal: API down)
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                logToBrowser(`❌ Error Kritis di dalam loop batch: ${e.message}`, 'error');
+                await new Promise(resolve => setTimeout(resolve, 3000)); // Jeda jika ada error besar
             }
         }
     } catch (initError) {
-        logToBrowser(`❌ Gagal inisialisasi: ${initError.message}`, 'error');
+        logToBrowser(`❌ Gagal Inisialisasi: ${initError.message}`, 'error');
     }
 
-    logToBrowser("🛑 Proses pengiriman dihentikan.");
+    logToBrowser("🛑 Proses spam dihentikan.");
     if (clientWs) clientWs.send(JSON.stringify({ type: 'status', running: false }));
+    isRunning = false;
+}
+
+async function buildAndSubmitTx({piServer, senderKeypair, feePayerKeypair, senderAccount, feePayerAccount, recipient, amount, baseFee, sequenceIndex, txId}) {
+    try {
+        // PENTING: Kalkulasi sequence number secara manual untuk setiap transaksi paralel
+        const txSequence = (BigInt(senderAccount.sequence) + BigInt(sequenceIndex) + 1n).toString();
+
+        const transaction = new StellarSdk.TransactionBuilder(
+                // Akun sumber transaksi (yang sequence-nya dipakai)
+                new StellarSdk.Account(senderAccount.id, txSequence), {
+                    fee: baseFee, // Fee akan di-override oleh FeeBump jika ada
+                    networkPassphrase: 'Pi Network',
+                })
+            .addOperation(StellarSdk.Operation.payment({
+                destination: recipient,
+                asset: StellarSdk.Asset.native(),
+                amount: amount,
+            }))
+            .setTimeout(30)
+            .build();
+
+        // Tandatangani oleh pengirim
+        transaction.sign(senderKeypair);
+
+        let txToSubmit = transaction;
+
+        // Jika ada wallet fee, bungkus dengan FeeBumpTransaction
+        if (feePayerKeypair && feePayerAccount) {
+            const feePayerSequence = (BigInt(feePayerAccount.sequence) + BigInt(sequenceIndex) + 1n).toString();
+            const feePayerForBump = new StellarSdk.Account(feePayerAccount.id, feePayerSequence);
+
+            txToSubmit = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(
+                feePayerKeypair.publicKey(), // Akun yang bayar fee
+                (parseInt(baseFee) * 2).toString(), // Fee untuk fee-bump (biasanya 2x lipat)
+                transaction, // Transaksi yang dibungkus
+                'Pi Network',
+                feePayerForBump
+            );
+            txToSubmit.sign(feePayerKeypair);
+        }
+        
+        // Kirim transaksi ke jaringan
+        const result = await piServer.submitTransaction(txToSubmit);
+        logToBrowser(`[TX ${txId}] ✅ Berhasil! Hash: ${result.hash.substring(0, 15)}...`, 'success');
+
+    } catch (e) {
+        const errorMessage = e.response?.data?.extras?.result_codes?.transaction || e.message || "Error tidak diketahui";
+        logToBrowser(`[TX ${txId}] ❌ Gagal: ${errorMessage}`, 'error');
+    }
 }
 
 
-// --- Manajemen Koneksi WebSocket ---
+// --- Manajemen Koneksi ---
 wss.on('connection', (ws) => {
-    logToBrowser('🖥️ Client terhubung ke server.');
+    logToBrowser('🖥️ Client terhubung.');
     clientWs = ws;
     ws.send(JSON.stringify({ type: 'status', running: isRunning }));
+
     ws.on('message', (message) => {
-        const data = JSON.parse(message);
-        if (data.command === 'start') {
-            if (!isRunning) {
-                isRunning = true;
-                runSenderLogic();
+        try {
+            const data = JSON.parse(message);
+            if (data.command === 'start') {
+                if (!isRunning) {
+                    isRunning = true;
+                    currentConfig = data.config;
+                    runSpammer(currentConfig); // Jalankan dengan config dari UI
+                }
+            } else if (data.command === 'stop') {
+                isRunning = false;
             }
-        } else if (data.command === 'stop') {
-            isRunning = false;
+        } catch (e) {
+            logToBrowser(`Error memproses pesan client: ${e.message}`, 'error');
         }
     });
+
     ws.on('close', () => {
         logToBrowser('🔌 Client terputus.');
-        clientWs = null;
+        if (clientWs === ws) clientWs = null;
     });
 });
 
-// Jalankan server (TETAP SAMA)
 server.listen(PORT, () => {
     console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
 });
