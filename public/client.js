@@ -6,10 +6,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Input Konfigurasi
     const senderMnemonicInput = document.getElementById('senderMnemonic');
-    const feePayerMnemonicInput = document.getElementById('feePayerMnemonic');
     const recipientAddressInput = document.getElementById('recipientAddress');
-    const parallelRequestsInput = document.getElementById('parallelRequests');
-    const amountPerTxInput = document.getElementById('amountPerTx');
+    const reserveAmountInput = document.getElementById('reserveAmount');
 
     let ws;
 
@@ -21,10 +19,10 @@ document.addEventListener('DOMContentLoaded', () => {
         ws.onmessage = handleServerMessage;
         ws.onclose = () => {
             addLog('🔌 Koneksi terputus. Mencoba menghubungkan kembali...', 'error');
-            updateButtonState(false);
+            updateUIState(false);
             setTimeout(connectWebSocket, 5000);
         };
-        ws.onerror = (error) => addLog('❌ WebSocket error.', 'error');
+        ws.onerror = () => addLog('❌ WebSocket error.', 'error');
     }
 
     function handleServerMessage(event) {
@@ -32,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.type === 'log') {
             addLog(data.message, data.level);
         } else if (data.type === 'status') {
-            updateButtonState(data.running);
+            updateUIState(data.running);
         }
     }
 
@@ -44,31 +42,35 @@ document.addEventListener('DOMContentLoaded', () => {
         logConsole.parentElement.scrollTop = logConsole.parentElement.scrollHeight;
     }
 
-    function updateButtonState(isRunning) {
+    function updateUIState(isRunning) {
         startButton.disabled = isRunning;
         stopButton.disabled = !isRunning;
-        // Kunci input saat berjalan
-        const inputs = [senderMnemonicInput, feePayerMnemonicInput, recipientAddressInput, parallelRequestsInput, amountPerTxInput];
-        inputs.forEach(input => input.disabled = isRunning);
+        // Kunci semua input saat bot berjalan
+        senderMnemonicInput.disabled = isRunning;
+        recipientAddressInput.disabled = isRunning;
+        reserveAmountInput.disabled = isRunning;
     }
 
     startButton.addEventListener('click', () => {
         const config = {
             senderMnemonic: senderMnemonicInput.value.trim(),
-            feePayerMnemonic: feePayerMnemonicInput.value.trim(),
             recipientAddress: recipientAddressInput.value.trim(),
-            parallelRequests: parseInt(parallelRequestsInput.value, 10),
-            amountPerTx: amountPerTxInput.value.trim()
+            reserveAmount: reserveAmountInput.value.trim()
         };
 
-        if (!config.senderMnemonic || !config.recipientAddress || !config.amountPerTx) {
-            addLog("❌ Harap isi Mnemonic Pengirim, Alamat Penerima, dan Jumlah Pi.", 'error');
+        // Validasi input
+        if (!config.senderMnemonic || !config.recipientAddress) {
+            addLog("❌ Harap isi Mnemonic Pengirim dan Alamat Penerima.", 'error');
+            return;
+        }
+        if (parseFloat(config.reserveAmount) < 1) {
+            addLog("❌ Jumlah saldo sisa minimal harus 1.0", 'error');
             return;
         }
 
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ command: 'start', config }));
-            updateButtonState(true);
+            updateUIState(true);
             addLog('▶️ Perintah START dengan konfigurasi baru dikirim.', 'warn');
         }
     });
