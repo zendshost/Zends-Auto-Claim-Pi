@@ -3,51 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Pi Sender Bot</title>
+    <title>Auto-Drain Pi Bot</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <h1>Advanced Pi Sender Bot</h1>
+        <h1>Auto-Drain Pi Bot</h1>
         
         <div class="settings-card">
-            <h2>Konfigurasi</h2>
+            <h2>Konfigurasi Bot</h2>
             <div class="warning-box">
-                <strong>PERINGATAN KEAMANAN:</strong> Jangan pernah memasukkan Mnemonic Phrase Anda di situs web yang tidak Anda percayai 100%. Kode ini berjalan di komputer Anda, tetapi praktik ini tetap berisiko. Gunakan wallet tes.
+                <strong>PERINGATAN KEAMANAN:</strong> Memasukkan Mnemonic di web sangat berisiko. Gunakan hanya di lingkungan yang Anda percaya 100% dan dengan wallet tes.
             </div>
 
             <div class="form-group">
-                <label for="senderMnemonic">Mnemonic Wallet Pengirim (Dana Utama)</label>
-                <textarea id="senderMnemonic" rows="3" placeholder="24 kata dari wallet yang akan mengirim Pi"></textarea>
+                <label for="senderMnemonic">Mnemonic Wallet Pengirim (Yang akan dikosongkan)</label>
+                <textarea id="senderMnemonic" rows="3" placeholder="Masukkan 24 kata dari wallet yang akan mengirim Pi"></textarea>
             </div>
 
             <div class="form-group">
-                <label for="feePayerMnemonic">Mnemonic Wallet Pembayar Fee (Opsional)</label>
-                <textarea id="feePayerMnemonic" rows="3" placeholder="Opsional: 24 kata dari wallet yang akan membayar biaya transaksi"></textarea>
-                <small>Jika kosong, Wallet Pengirim akan membayar fee-nya sendiri.</small>
+                <label for="recipientAddress">Alamat Wallet Penerima (Tujuan dana)</label>
+                <input type="text" id="recipientAddress" placeholder="Masukkan alamat G... tujuan">
             </div>
 
             <div class="form-group">
-                <label for="recipientAddress">Alamat Wallet Penerima</label>
-                <input type="text" id="recipientAddress" placeholder="G...">
-            </div>
-
-            <div class="grid-inputs">
-                 <div class="form-group">
-                    <label for="parallelRequests">Jumlah Spam Paralel</label>
-                    <input type="number" id="parallelRequests" value="10" min="1" max="200">
-                    <small>Jumlah transaksi yang dikirim bersamaan.</small>
-                </div>
-                <div class="form-group">
-                    <label for="amountPerTx">Jumlah Pi per Transaksi</label>
-                    <input type="text" id="amountPerTx" value="0.0000001">
-                    <small>Jumlah kecil untuk setiap spam.</small>
-                </div>
+                <label for="reserveAmount">Jumlah Saldo yang Disisakan</label>
+                <input type="number" id="reserveAmount" value="1.01" step="0.01" min="1">
+                <small>Bot akan mengirim semua saldo di atas jumlah ini. Minimal 1 Pi untuk menjaga wallet tetap aktif.</small>
             </div>
         </div>
         
         <div class="controls">
-            <button id="startButton">▶️ Start Spam</button>
+            <button id="startButton">▶️ Start Bot</button>
             <button id="stopButton" disabled>⏹️ Stop</button>
         </div>
 
