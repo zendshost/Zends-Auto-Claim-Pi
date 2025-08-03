@@ -2,7 +2,7 @@
 const express = require('express');
 const http = require('http');
 const path = require('path');
-const { Server } = require('ws');
+const { Server: WebSocketServer } = require('ws');
 const StellarSdk = require('stellar-sdk');
 const ed25519 = require('ed25519-hd-key');
 const bip39 = require('bip39');
@@ -12,25 +12,22 @@ require("dotenv").config();
 const PORT = process.env.PORT || 3000;
 const app = express();
 const server = http.createServer(app);
-const wss = new Server({ server });
+const wss = new WebSocketServer({ server });
 
-// Sajikan file statis dari folder 'public'
 app.use(express.static(path.join(__dirname, 'public')));
 
-let isRunning = false; // Variabel untuk mengontrol loop
-let clientWs = null; // Menyimpan koneksi WebSocket client
+let isRunning = false;
+let currentConfig = {};
+let clientWs = null;
 
-// Fungsi untuk mengirim log ke browser
 const logToBrowser = (message, level = 'info') => {
-    // Tetap tampilkan di konsol server untuk debugging
-    // console.log(message); 
+    // console.log(message); // Uncomment for server-side debugging
     if (clientWs && clientWs.readyState === clientWs.OPEN) {
         clientWs.send(JSON.stringify({ type: 'log', level, message }));
     }
 };
 
-// --- Logika Pi Sender ---
-async function getPiWalletAddressFromSeed(mnemonic) {
+async function getKeypairFromMnemonic(mnemonic) {
     if (!bip39.validateMnemonic(mnemonic)) {
         throw new Error("Mnemonic tidak valid.");
     }
@@ -40,113 +37,109 @@ async function getPiWalletAddressFromSeed(mnemonic) {
     return StellarSdk.Keypair.fromRawEd25519Seed(key);
 }
 
-async function runSenderLogic() {
+// --- Logika Utama "Auto-Drain" ---
+async function runSenderLogic(config) {
     if (!isRunning) return;
 
-    logToBrowser("🚀 Memulai inisialisasi bot...");
-    const mnemonic = process.env.MNEMONIC;
-    const recipient = process.env.RECEIVER_ADDRESS;
-
-    if (!mnemonic || !recipient) {
-        logToBrowser("❌ Pastikan MNEMONIC dan RECEIVER_ADDRESS sudah diatur di file .env", 'error');
-        isRunning = false;
-        return;
-    }
+    logToBrowser("🚀 Memulai inisialisasi bot auto-drain...");
 
     try {
         const piServer = new StellarSdk.Server('https://apimainnet.vercel.app');
-        const senderKeypair = await getPiWalletAddressFromSeed(mnemonic);
+        const senderKeypair = await getKeypairFromMnemonic(config.senderMnemonic);
         const senderPublic = senderKeypair.publicKey();
+        const reserveAmount = parseFloat(config.reserveAmount) || 1.01; // Default 1.01 jika tidak valid
 
         logToBrowser(`🔑 Alamat Pengirim: ${senderPublic}`);
-        logToBrowser(`🎯 Alamat Penerima: ${recipient}`);
-        logToBrowser("✅ Inisialisasi selesai. Memulai loop transaksi...");
+        logToBrowser(`🎯 Alamat Penerima: ${config.recipientAddress}`);
+        logToBrowser(`💰 Saldo Disisakan: ${reserveAmount} Pi`);
+        logToBrowser("✅ Inisialisasi selesai. Memulai loop pemeriksaan saldo...");
         logToBrowser("======================================================");
 
-        // Loop utama
+        let lastBalanceLogTime = 0;
+
         while (isRunning) {
             try {
                 const account = await piServer.loadAccount(senderPublic);
                 const piBalance = account.balances.find(b => b.asset_type === 'native');
                 const balance = parseFloat(piBalance.balance);
 
-                // Sedikit modifikasi untuk mengurangi banjir log di UI
-                // Kita hanya akan log status saldo sekali per detik saat saldo kosong
-                let lastBalanceLogTime = 0;
-                
-                const amountToSend = balance - 1.01;
+                const amountToSend = balance - reserveAmount;
 
                 if (amountToSend <= 0) {
                     const now = Date.now();
-                    if (now - lastBalanceLogTime > 50) { // Log hanya sekali per 50 ms
-                         logToBrowser(`⚠️ Saldo tidak cukup (${balance} Pi). Memeriksa tanpa henti...`, 'warn');
-                         lastBalanceLogTime = now;
+                    if (now - lastBalanceLogTime > 50) { // Log status hanya sekali per 50 ms
+                        logToBrowser(`⚠️ Saldo tidak cukup (${balance} Pi). Memeriksa tanpa henti...`, 'warn');
+                        lastBalanceLogTime = now;
                     }
-                    continue; // <- INI BAGIAN UTAMA: LANGSUNG LOOP TANPA JEDA
+                    continue; // Loop tanpa jeda
                 }
 
                 const formattedAmount = amountToSend.toFixed(7);
-                logToBrowser(`➡️  Mengirim: ${formattedAmount} Pi`);
+                logToBrowser(`➡️  Saldo Terdeteksi! Mengirim ${formattedAmount} Pi...`, 'success');
 
                 const tx = new StellarSdk.TransactionBuilder(account, {
                     fee: await piServer.fetchBaseFee(),
                     networkPassphrase: 'Pi Network',
                 })
-                    .addOperation(StellarSdk.Operation.payment({
-                        destination: recipient,
-                        asset: StellarSdk.Asset.native(),
-                        amount: formattedAmount,
-                    }))
-                    .setTimeout(30)
-                    .build();
+                .addOperation(StellarSdk.Operation.payment({
+                    destination: config.recipientAddress,
+                    asset: StellarSdk.Asset.native(),
+                    amount: formattedAmount,
+                }))
+                .setTimeout(30)
+                .build();
 
                 tx.sign(senderKeypair);
                 const result = await piServer.submitTransaction(tx);
 
-                logToBrowser(`✅ Transaksi Berhasil! Hash: ${result.hash}`, 'success');
+                logToBrowser(`✅ Transaksi Terkirim! Hash: ${result.hash}`);
                 logToBrowser(`🔗 Link: https://blockexplorer.minepi.com/mainnet/transactions/${result.hash}`);
                 logToBrowser("------------------------------------------------------");
 
             } catch (e) {
                 const errorMessage = e.response?.data?.extras?.result_codes?.transaction || e.message || "Error tidak diketahui";
                 logToBrowser(`❌ Terjadi Error: ${errorMessage}`, 'error');
-                logToBrowser("------------------------------------------------------");
-                // Tambahkan jeda saat error untuk mencegah spam saat ada masalah persisten (misal: API down)
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                await new Promise(resolve => setTimeout(resolve, 3000)); // Jeda saat ada error
             }
         }
     } catch (initError) {
-        logToBrowser(`❌ Gagal inisialisasi: ${initError.message}`, 'error');
+        logToBrowser(`❌ Gagal Inisialisasi: ${initError.message}`, 'error');
     }
 
-    logToBrowser("🛑 Proses pengiriman dihentikan.");
+    logToBrowser("🛑 Proses dihentikan.");
     if (clientWs) clientWs.send(JSON.stringify({ type: 'status', running: false }));
+    isRunning = false;
 }
-
 
 // --- Manajemen Koneksi WebSocket ---
 wss.on('connection', (ws) => {
-    logToBrowser('🖥️ Client terhubung ke server.');
+    logToBrowser('🖥️ Client terhubung.');
     clientWs = ws;
     ws.send(JSON.stringify({ type: 'status', running: isRunning }));
+
     ws.on('message', (message) => {
-        const data = JSON.parse(message);
-        if (data.command === 'start') {
-            if (!isRunning) {
-                isRunning = true;
-                runSenderLogic();
+        try {
+            const data = JSON.parse(message);
+            if (data.command === 'start') {
+                if (!isRunning) {
+                    isRunning = true;
+                    currentConfig = data.config; // Simpan konfigurasi dari UI
+                    runSenderLogic(currentConfig); // Jalankan bot dengan konfigurasi tersebut
+                }
+            } else if (data.command === 'stop') {
+                isRunning = false;
             }
-        } else if (data.command === 'stop') {
-            isRunning = false;
+        } catch (e) {
+            logToBrowser(`Error memproses pesan client: ${e.message}`, 'error');
         }
     });
+
     ws.on('close', () => {
         logToBrowser('🔌 Client terputus.');
-        clientWs = null;
+        if (clientWs === ws) clientWs = null;
     });
 });
 
-// Jalankan server (TETAP SAMA)
 server.listen(PORT, () => {
     console.log(`🚀 Server berjalan di http://localhost:${PORT}`);
 });
