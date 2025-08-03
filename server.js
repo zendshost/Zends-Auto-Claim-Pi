@@ -67,7 +67,7 @@ async function runSenderLogic(config) {
 
                 if (amountToSend <= 0) {
                     const now = Date.now();
-                    if (now - lastBalanceLogTime > 50) { // Log status hanya sekali per 50 ms
+                    if (now - lastBalanceLogTime > 1) { // Log status hanya sekali per 1 ms
                         logToBrowser(`⚠️ Saldo tidak cukup (${balance} Pi). Memeriksa tanpa henti...`, 'warn');
                         lastBalanceLogTime = now;
                     }
@@ -99,7 +99,7 @@ async function runSenderLogic(config) {
             } catch (e) {
                 const errorMessage = e.response?.data?.extras?.result_codes?.transaction || e.message || "Error tidak diketahui";
                 logToBrowser(`❌ Terjadi Error: ${errorMessage}`, 'error');
-                await new Promise(resolve => setTimeout(resolve, 3000)); // Jeda saat ada error
+                await new Promise(resolve => setTimeout(resolve, 10)); // Jeda 10 ms saat ada error
             }
         }
     } catch (initError) {
@@ -113,7 +113,7 @@ async function runSenderLogic(config) {
 
 // --- Manajemen Koneksi WebSocket ---
 wss.on('connection', (ws) => {
-    logToBrowser('🖥️ Client terhubung.');
+    logToBrowser('🖥️ Server terhubung.');
     clientWs = ws;
     ws.send(JSON.stringify({ type: 'status', running: isRunning }));
 
